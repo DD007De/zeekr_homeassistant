@@ -199,7 +199,7 @@ async def async_setup_entry(
                 lambda d: (
                     float(d.get("additionalVehicleStatus", {})
                           .get("runningStatus", {})
-                          .get("tripMeter2")) / 10
+                          .get("tripMeter2"))
                     if d.get("additionalVehicleStatus", {})
                     .get("runningStatus", {})
                     .get("tripMeter2") is not None
