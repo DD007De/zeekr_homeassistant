@@ -189,7 +189,7 @@ class ZeekrCoordinator(DataUpdateCoordinator):
 
             data = {}
             for result in results:
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
                     _LOGGER.error("Error updating vehicle: %s", result)
                     continue
                 if result:
