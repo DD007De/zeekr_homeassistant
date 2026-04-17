@@ -353,13 +353,13 @@ class ZeekrChargingScheduleSwitch(CoordinatorEntity[ZeekrCoordinator], SwitchEnt
     """Switch to enable/disable the charging schedule."""
 
     _attr_has_entity_name = True
-    _attr_name = "Charging Schedule"
     _attr_icon = "mdi:battery-clock"
 
     def __init__(self, coordinator: ZeekrCoordinator, vin: str) -> None:
         """Initialize the charging schedule switch."""
         super().__init__(coordinator)
         self.vin = vin
+        self._attr_name = f"Zeekr {vin[-4:] if vin else ''} Charge Plan"
         self._attr_unique_id = f"{vin}_charging_schedule"
 
     @property
@@ -426,13 +426,13 @@ class ZeekrTravelPlanSwitch(CoordinatorEntity[ZeekrCoordinator], SwitchEntity):
     """Switch to enable/disable the travel plan (pre-conditioning)."""
 
     _attr_has_entity_name = True
-    _attr_name = "Travel Plan"
     _attr_icon = "mdi:car-clock"
 
     def __init__(self, coordinator: ZeekrCoordinator, vin: str) -> None:
         """Initialize the travel plan switch."""
         super().__init__(coordinator)
         self.vin = vin
+        self._attr_name = f"Zeekr {vin[-4:] if vin else ''} Travel Plan"
         self._attr_unique_id = f"{vin}_travel_plan"
 
     @property
@@ -500,13 +500,13 @@ class ZeekrDepartureACSwitch(CoordinatorEntity[ZeekrCoordinator], SwitchEntity):
     """Switch to enable/disable AC pre-conditioning on departure."""
 
     _attr_has_entity_name = True
-    _attr_name = "Departure AC"
     _attr_icon = "mdi:air-conditioner"
 
     def __init__(self, coordinator: ZeekrCoordinator, vin: str) -> None:
         """Initialize the departure AC switch."""
         super().__init__(coordinator)
         self.vin = vin
+        self._attr_name = f"Zeekr {vin[-4:] if vin else ''} Departure AC"
         self._attr_unique_id = f"{vin}_departure_ac"
 
     @property
