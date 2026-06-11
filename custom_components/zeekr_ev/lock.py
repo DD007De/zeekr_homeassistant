@@ -51,6 +51,8 @@ async def async_setup_entry(
 class ZeekrLock(CoordinatorEntity, LockEntity):
     """Zeekr Lock class representing various latch/lock states."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: ZeekrCoordinator,
@@ -64,7 +66,7 @@ class ZeekrLock(CoordinatorEntity, LockEntity):
         self.vin = vin
         self.field = field
         self.category = category
-        self._attr_name = f"Zeekr {vin[-4:] if vin else ''} {label}"
+        self._attr_name = label
         self._attr_unique_id = f"{vin}_{field}"
 
     @property
@@ -130,12 +132,24 @@ class ZeekrLock(CoordinatorEntity, LockEntity):
             # Close charge lid (Lock)
             # User: "stop is closed"
             command = "stop"
-            service_id = "RDO"
+            service_id = "RDC"
             setting = {
                 "serviceParameters": [
                     {
                         "key": "target",
                         "value": "front-charge-lid"
+                    }
+                ]
+            }
+        elif self.field == "trunkLockStatus":
+            # Trunk locks automatically, but we can try sending a central lock command
+            command = "start"
+            service_id = "RDL"
+            setting = {
+                "serviceParameters": [
+                    {
+                        "key": "door",
+                        "value": "all"
                     }
                 ]
             }
@@ -192,6 +206,17 @@ class ZeekrLock(CoordinatorEntity, LockEntity):
                     }
                 ]
             }
+        elif self.field == "trunkLockStatus":
+            command = "stop"
+            service_id = "RDU"
+            setting = {
+                "serviceParameters": [
+                    {
+                        "key": "target",
+                        "value": "trunk"
+                    }
+                ]
+            }
 
         if command and service_id and setting:
             await self.coordinator.async_inc_invoke()
@@ -225,6 +250,9 @@ class ZeekrLock(CoordinatorEntity, LockEntity):
         elif self.field == "chargeLidDcAcStatus":
             # Locked (Closed)="2", Unlocked (Open)="1"
             status[self.field] = "2" if locked else "1"
+        elif self.field == "trunkLockStatus":
+            # Locked="1", Unlocked="0"
+            status[self.field] = "1" if locked else "0"
 
     @property
     def device_info(self):

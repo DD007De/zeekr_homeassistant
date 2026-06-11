@@ -23,11 +23,13 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, CONF_DRIVE_SIDE, DRIVE_SIDE_LHD, DRIVE_SIDE_RHD
 from .coordinator import ZeekrCoordinator
+from .utils import get_api_version
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -270,18 +272,19 @@ async def async_setup_entry(
                 )
             )
 
-        # BMS diagnostic sensors (raw API values from Zeekr Connected API)
+        # BMS diagnostic sensors for dynamic range bands reported by the API.
         entities.append(
             ZeekrSensor(
                 coordinator,
                 vin,
                 "distance_to_empty_on_battery_20_soc",
-                "distanceToEmptyOnBattery20Soc",
+                "Dynamic Range Estimate Upper 80%",
                 lambda d: d.get("additionalVehicleStatus", {})
                 .get("electricVehicleStatus", {})
                 .get("distanceToEmptyOnBattery20Soc"),
                 UnitOfLength.KILOMETERS,
                 SensorDeviceClass.DISTANCE,
+                entity_category=EntityCategory.DIAGNOSTIC,
             )
         )
         entities.append(
@@ -289,12 +292,13 @@ async def async_setup_entry(
                 coordinator,
                 vin,
                 "distance_to_empty_on_battery_100_soc",
-                "distanceToEmptyOnBattery100Soc",
+                "Dynamic Range Estimate Lower 20%",
                 lambda d: d.get("additionalVehicleStatus", {})
                 .get("electricVehicleStatus", {})
                 .get("distanceToEmptyOnBattery100Soc"),
                 UnitOfLength.KILOMETERS,
                 SensorDeviceClass.DISTANCE,
+                entity_category=EntityCategory.DIAGNOSTIC,
             )
         )
         # Charging Status Sensors (only when charging)
@@ -348,13 +352,20 @@ async def async_setup_entry(
                 )
             )
 
-        entities.append(ZeekrChargerStateSensor(coordinator, vin))
+        # Formatted Charging Time Remaining Sensor
+        entities.append(ZeekrChargingTimeFormattedSensor(coordinator, vin))
+
+        # Status sensors
+        entities.append(ZeekrVehicleStatusSensor(coordinator, vin))
+        entities.append(ZeekrEngineStatusSensor(coordinator, vin))
 
     async_add_entities(entities)
 
 
 class ZeekrSensor(CoordinatorEntity, SensorEntity):
     """Zeekr Sensor class."""
+
+    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -366,17 +377,19 @@ class ZeekrSensor(CoordinatorEntity, SensorEntity):
         unit: str | None = None,
         device_class: SensorDeviceClass | None = None,
         state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT,
+        entity_category: EntityCategory | None = None,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self.vin = vin
         self.key = key
-        self._attr_name = f"Zeekr {vin[-4:] if vin else ''} {name}"
+        self._attr_name = name
         self._attr_unique_id = f"{vin}_{key}"
         self._value_fn = value_fn
         self._attr_native_unit_of_measurement = unit
         self._attr_device_class = device_class
         self._attr_state_class = state_class
+        self._attr_entity_category = entity_category
 
     @property
     def native_value(self):
@@ -419,6 +432,7 @@ class ZeekrAPIStatusSensor(CoordinatorEntity, SensorEntity):
             "name": "Zeekr API",
             "manufacturer": "Zeekr",
             "model": "API Integration",
+            "sw_version": get_api_version(self.coordinator.client),
         }
 
     @property
@@ -497,35 +511,139 @@ class ZeekrAPIStatSensor(CoordinatorEntity, SensorEntity):
             "name": "Zeekr API",
             "manufacturer": "Zeekr",
             "model": "API Integration",
+            "sw_version": get_api_version(self.coordinator.client),
         }
 
 
-class ZeekrChargerStateSensor(CoordinatorEntity, SensorEntity):
-    """Sensor to expose raw chargerState value for diagnostics."""
-    def __init__(self, coordinator: ZeekrCoordinator, vin: str):
+class ZeekrChargingTimeFormattedSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for formatted display of charging time remaining (e.g., 2h 53m)."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: ZeekrCoordinator, vin: str) -> None:
+        """Initialize the sensor."""
         super().__init__(coordinator)
         self.vin = vin
-        self._attr_name = f"Zeekr {vin[-4:] if vin else ''} Charger State"
-        self._attr_unique_id = f"{vin}_charger_state"
+        self._attr_name = "Charging Time Remaining"
+        self._attr_unique_id = f"{vin}_charging_time_formatted"
+        self._attr_icon = "mdi:timer-sand"
 
     @property
-    def state(self):
-        return (
-            self.coordinator.data.get(self.vin, {})
-            .get("additionalVehicleStatus", {})
+    def native_value(self) -> str | None:
+        """Return the formatted time remaining."""
+        data = self.coordinator.data.get(self.vin, {})
+        if not data:
+            return None
+
+        raw_minutes = (
+            data.get("additionalVehicleStatus", {})
             .get("electricVehicleStatus", {})
-            .get("chargerState")
+            .get("timeToFullyCharged")
         )
 
-    @property
-    def extra_state_attributes(self):
-        return {
-            "raw_charger_state": self.state
-        }
+        if raw_minutes is None:
+            return None
+
+        try:
+            minutes = int(raw_minutes)
+            # 2047 is the typical "not charging" value from the API
+            if minutes >= 2047 or minutes <= 0:
+                return "Not charging"
+
+            hours, mins = divmod(minutes, 60)
+            if hours > 0:
+                return f"{hours}h {mins}m"
+            return f"{mins}m"
+        except (ValueError, TypeError):
+            return "Unknown"
 
     @property
     def device_info(self):
-        """Return device info to attach sensor to car device."""
+        """Return device info."""
+        return {
+            "identifiers": {(DOMAIN, self.vin)},
+            "name": f"Zeekr {self.vin}",
+            "manufacturer": "Zeekr",
+        }
+
+
+class ZeekrVehicleStatusSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for vehicle usage mode / status."""
+
+    _attr_has_entity_name = True
+
+    _STATUS_MAP = {
+        "0": "Deep Sleep",
+        "1": "Parked",
+        "2": "Unlocked",
+        "3": "System Active",
+        "4": "Ready to Go",
+        "13": "Active",
+    }
+
+    def __init__(self, coordinator: ZeekrCoordinator, vin: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self.vin = vin
+        self._attr_name = "Vehicle Status"
+        self._attr_unique_id = f"{vin}_vehicle_status"
+        self._attr_icon = "mdi:car-connected"
+
+    @property
+    def native_value(self):
+        """Return mapped vehicle status."""
+        raw = (
+            self.coordinator.data.get(self.vin, {})
+            .get("basicVehicleStatus", {})
+            .get("usageMode")
+        )
+        if raw is None:
+            return None
+        return self._STATUS_MAP.get(str(raw).strip(), str(raw))
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self.vin)},
+            "name": f"Zeekr {self.vin}",
+            "manufacturer": "Zeekr",
+        }
+
+
+class ZeekrEngineStatusSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for engine / drive status."""
+
+    _attr_has_entity_name = True
+
+    _STATUS_MAP = {
+        "engine-off": "Parked",
+        "engine-running": "Driving",
+        "ready": "Ready",
+        "charging": "Charging",
+    }
+
+    def __init__(self, coordinator: ZeekrCoordinator, vin: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self.vin = vin
+        self._attr_name = "Engine Status"
+        self._attr_unique_id = f"{vin}_engine_status"
+        self._attr_icon = "mdi:car"
+
+    @property
+    def native_value(self):
+        """Return mapped engine status."""
+        raw = (
+            self.coordinator.data.get(self.vin, {})
+            .get("basicVehicleStatus", {})
+            .get("engineStatus")
+        )
+        if raw is None:
+            return None
+        return self._STATUS_MAP.get(str(raw).strip().lower(), str(raw))
+
+    @property
+    def device_info(self):
         return {
             "identifiers": {(DOMAIN, self.vin)},
             "name": f"Zeekr {self.vin}",
