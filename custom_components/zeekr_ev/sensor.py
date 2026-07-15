@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 
 from homeassistant.components.sensor import (
@@ -20,6 +21,7 @@ from homeassistant.const import (
     UnitOfPressure,
     UnitOfSpeed,
     UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -32,6 +34,35 @@ from .coordinator import ZeekrCoordinator
 from .utils import get_api_version
 
 _LOGGER = logging.getLogger(__name__)
+
+# Home Assistant refuses to store state attributes larger than 16384 bytes
+# ("Attributes will not be stored" + a DB-performance warning). A full
+# journey-log page (up to 50 trips) can exceed that, so the Journey Log sensor
+# includes only the most-recent trips that fit within this safe budget (headroom
+# left for the wrapper keys + HA's own serialization overhead).
+_JOURNEY_LOG_ATTR_BUDGET = 14000
+
+
+def _latest_journey_trip(data: dict) -> dict:
+    """Return the most recent journey-log trip, chosen by startTime.
+
+    The API has been observed to return trips newest-first, but the ordering
+    is not guaranteed — so we pick the trip with the highest startTime
+    explicitly rather than trusting index 0.
+    """
+    trips = data.get("journeyLog", {}).get("data") or []
+    if not trips:
+        return {}
+    return max(trips, key=lambda t: t.get("startTime") or 0)
+
+
+def _journey_last_duration(data: dict) -> int | None:
+    """Duration of the most recent trip, in whole minutes."""
+    trip = _latest_journey_trip(data)
+    start, end = trip.get("startTime"), trip.get("endTime")
+    if start and end:
+        return round((end - start) / 60000)
+    return None
 
 
 def _to_float(value):
@@ -445,6 +476,95 @@ async def async_setup_entry(
         entities.append(ZeekrVehicleStatusSensor(coordinator, vin))
         entities.append(ZeekrEngineStatusSensor(coordinator, vin))
 
+        # Journey Log sensors
+        # Each "last" sensor reads the most recent trip via _latest_journey_trip
+        # (max startTime), so they stay correct regardless of API ordering.
+        # Journey Log Last Distance
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "journey_log_last_distance",
+                "Journey Log Last Distance",
+                lambda d: _latest_journey_trip(d).get("traveledDistance"),
+                UnitOfLength.KILOMETERS,
+                SensorDeviceClass.DISTANCE,
+                SensorStateClass.MEASUREMENT,
+            )
+        )
+        # Journey Log Last Avg Speed
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "journey_log_last_avg_speed",
+                "Journey Log Last Avg Speed",
+                lambda d: _latest_journey_trip(d).get("avgSpeed"),
+                UnitOfSpeed.KILOMETERS_PER_HOUR,
+                SensorDeviceClass.SPEED,
+                SensorStateClass.MEASUREMENT,
+            )
+        )
+        # Journey Log Last Consumption (a rate in kWh/100km — no HA device_class
+        # exists for consumption-per-distance, so leave it unset).
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "journey_log_last_consumption",
+                "Journey Log Last Consumption",
+                lambda d: _latest_journey_trip(d).get("electricConsumption"),
+                "kWh/100km",
+                None,
+                SensorStateClass.MEASUREMENT,
+            )
+        )
+        # Journey Log Last Regeneration
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "journey_log_last_regeneration",
+                "Journey Log Last Regeneration",
+                lambda d: _latest_journey_trip(d).get("electricRegeneration"),
+                "Wh",
+                SensorDeviceClass.ENERGY,
+                # Absolute Wh recovered per trip (e.g. 560 Wh on a 4 km trip) —
+                # read as a rate it would be an implausibly small ~5 Wh/100km, so
+                # this is energy, not a per-distance figure. MEASUREMENT records
+                # per-trip statistics.
+                SensorStateClass.MEASUREMENT,
+            )
+        )
+        # Journey Log Last Duration
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "journey_log_last_duration",
+                "Journey Log Last Duration",
+                _journey_last_duration,
+                UnitOfTime.MINUTES,
+                SensorDeviceClass.DURATION,
+                SensorStateClass.MEASUREMENT,
+            )
+        )
+        # Journey Log Total Trips (from API total)
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "journey_log_total_trips",
+                "Journey Log Total Trips",
+                lambda d: d.get("journeyLog", {}).get("total"),
+                None,
+                None,
+                SensorStateClass.TOTAL,
+            )
+        )
+        # Journey Log sensor with trip history as attributes
+        entities.append(ZeekrJourneyLogSensor(coordinator, vin))
+
     async_add_entities(entities)
 
 
@@ -530,15 +650,10 @@ class ZeekrAPIStatusSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Return the state attributes including tokens only."""
+        """Return non-sensitive API status attributes (tokens redacted)."""
         attrs = {}
         client = self.coordinator.client
         if client:
-            attrs["auth_token"] = client.auth_token
-            attrs["bearer_token"] = client.bearer_token
-            attrs["access_token"] = (
-                client.bearer_token
-            )  # Same as bearer_token, for clarity
             attrs["logged_in"] = client.logged_in
             attrs["username"] = getattr(client, "username", None)
             attrs["region_code"] = getattr(client, "region_code", None)
@@ -730,6 +845,111 @@ class ZeekrEngineStatusSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self.vin)},
+            "name": f"Zeekr {self.vin}",
+            "manufacturer": "Zeekr",
+        }
+
+
+class ZeekrJourneyLogSensor(CoordinatorEntity, SensorEntity):
+    """Zeekr Journey Log sensor with trip history as attributes."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: ZeekrCoordinator, vin: str):
+        super().__init__(coordinator)
+        self.vin = vin
+        # has_entity_name: the device name prefixes this automatically, matching
+        # every other sensor in the integration ("<device> Journey Log").
+        self._attr_name = "Journey Log"
+        self._attr_unique_id = f"{vin}_journey_log"
+        self._attr_icon = "mdi:map-marker-path"
+
+    @property
+    def native_value(self):
+        """Return number of loaded trips."""
+        data = self.coordinator.data.get(self.vin, {})
+        journey_log = data.get("journeyLog", {})
+        trips = journey_log.get("data", [])
+        return len(trips)
+
+    @property
+    def extra_state_attributes(self):
+        """Return recent trips as attributes.
+
+        HA caps stored state attributes at 16384 bytes; a full 50-trip page can
+        exceed that ("Attributes will not be stored" + DB-performance warning).
+        So we include the most-recent trips that fit within
+        ``_JOURNEY_LOG_ATTR_BUDGET`` and expose ``displayed_trips`` vs.
+        ``total_trips`` so the cap is transparent. The dedicated ``last_*``
+        sensors carry the latest trip for long-term statistics regardless.
+        """
+        data = self.coordinator.data.get(self.vin, {})
+        journey_log = data.get("journeyLog", {})
+        trips_raw = journey_log.get("data", [])
+
+        if not trips_raw:
+            return {}
+
+        # Newest trip first, regardless of API ordering.
+        trips_raw = sorted(
+            trips_raw, key=lambda t: t.get("startTime") or 0, reverse=True
+        )
+
+        trips = []
+        used = 0
+        for trip in trips_raw:
+            track_points = trip.get("trackPoints", [])
+            start_point = track_points[0] if track_points else {}
+            end_point = track_points[-1] if track_points else {}
+
+            # Calculate duration in minutes
+            start_ts = trip.get("startTime", 0)
+            end_ts = trip.get("endTime", 0)
+            duration_min = round((end_ts - start_ts) / 60000) if end_ts and start_ts else None
+
+            entry = {
+                # trip_id + report_time are the handle for the
+                # zeekr_ev.get_trip_trackpoints service (full GPS route on
+                # demand); the top-level "vin" key already identifies the car,
+                # so it isn't repeated per trip.
+                "trip_id": trip.get("tripId"),
+                "report_time": trip.get("reportTime"),
+                "start_time": start_ts,
+                "end_time": end_ts,
+                "duration_min": duration_min,
+                "distance_km": trip.get("traveledDistance"),
+                "avg_speed_kmh": trip.get("avgSpeed"),
+                # electricConsumption is a rate (kWh/100km), not absolute kWh —
+                # e.g. 21 on a 4 km trip. Key renamed to reflect the real unit.
+                "consumption_kwh_per_100km": trip.get("electricConsumption"),
+                "regeneration_wh": trip.get("electricRegeneration"),
+                "start_lat": start_point.get("latitude"),
+                "start_lon": start_point.get("longitude"),
+                "end_lat": end_point.get("latitude"),
+                "end_lon": end_point.get("longitude"),
+                "start_odometer": trip.get("startOdometer"),
+                "end_odometer": trip.get("endOdometer"),
+            }
+
+            # Stop before the blob would exceed HA's attribute cap, but always
+            # keep at least the most-recent trip.
+            used += len(json.dumps(entry, default=str))
+            if trips and used > _JOURNEY_LOG_ATTR_BUDGET:
+                break
+            trips.append(entry)
+
+        return {
+            "vin": self.vin,
+            "trips": trips,
+            "displayed_trips": len(trips),
+            "total_trips": journey_log.get("total", 0),
+        }
+
+    @property
+    def device_info(self):
+        """Return device info."""
         return {
             "identifiers": {(DOMAIN, self.vin)},
             "name": f"Zeekr {self.vin}",
