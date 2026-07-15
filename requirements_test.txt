@@ -3,3 +3,6 @@ pytest
 pytest-homeassistant-custom-component==0.13.338
 pytest-cov
 pytest-asyncio
+# Security: force patched numpy (transitive test dep).
+# Fixes timedelta64->string OOB write (AIKIDO-2026-795744, affected <=2.4.4).
+numpy>=2.4.5
