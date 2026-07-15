@@ -34,6 +34,21 @@ from .utils import get_api_version
 _LOGGER = logging.getLogger(__name__)
 
 
+def _to_float(value):
+    """Return value as float, or None for empty/None/non-numeric input.
+
+    The vehicle status API reports many fields as strings that are empty ("")
+    or null while the car is parked (e.g. discharge current/voltage, heading).
+    Returning None keeps those sensors unavailable instead of raising.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def get_tire_position_label(api_position: str, drive_side: str) -> str:
     """
     Map API tire position to display label based on vehicle drive side.
@@ -354,6 +369,77 @@ async def async_setup_entry(
 
         # Formatted Charging Time Remaining Sensor
         entities.append(ZeekrChargingTimeFormattedSensor(coordinator, vin))
+
+        # Live driving telemetry from basicVehicleStatus (for ABRP).
+        # Values are 0/empty/null while parked; guarded via _to_float.
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "vehicle_speed",
+                "Vehicle Speed",
+                lambda d: _to_float(d.get("basicVehicleStatus", {}).get("speed")),
+                UnitOfSpeed.KILOMETERS_PER_HOUR,
+                SensorDeviceClass.SPEED,
+            )
+        )
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "heading",
+                "Heading",
+                lambda d: _to_float(
+                    d.get("basicVehicleStatus", {}).get("position", {}).get("direction")
+                ),
+                "°",
+                None,
+            )
+        )
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "elevation",
+                "Elevation",
+                lambda d: _to_float(
+                    d.get("basicVehicleStatus", {}).get("position", {}).get("altitude")
+                ),
+                UnitOfLength.METERS,
+                None,
+            )
+        )
+        # Instantaneous battery discharge (populates while driving; empty at rest).
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "discharge_current",
+                "Discharge Current",
+                lambda d: _to_float(
+                    d.get("additionalVehicleStatus", {})
+                    .get("electricVehicleStatus", {})
+                    .get("disChargeIAct")
+                ),
+                UnitOfElectricCurrent.AMPERE,
+                SensorDeviceClass.CURRENT,
+            )
+        )
+        entities.append(
+            ZeekrSensor(
+                coordinator,
+                vin,
+                "discharge_voltage",
+                "Discharge Voltage",
+                lambda d: _to_float(
+                    d.get("additionalVehicleStatus", {})
+                    .get("electricVehicleStatus", {})
+                    .get("disChargeUAct")
+                ),
+                UnitOfElectricPotential.VOLT,
+                SensorDeviceClass.VOLTAGE,
+            )
+        )
 
         # Status sensors
         entities.append(ZeekrVehicleStatusSensor(coordinator, vin))
