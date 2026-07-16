@@ -16,6 +16,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_PASSWORD_PUBLIC_KEY,
     CONF_POLLING_INTERVAL,
+    CONF_POLLING_INTERVAL_SECONDS,
     CONF_PROD_SECRET,
     CONF_USERNAME,
     CONF_VIN_IV,
@@ -26,6 +27,7 @@ from .const import (
     DRIVE_SIDE_LHD,
     DRIVE_SIDE_RHD,
     DEFAULT_POLLING_INTERVAL,
+    DEFAULT_POLLING_INTERVAL_SECONDS,
     DOMAIN,
     COUNTRY_CODE_MAPPING,
 )
@@ -173,6 +175,12 @@ class ZeekrEVAPIFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):  # type: 
                     vol.Optional(
                         CONF_POLLING_INTERVAL,
                         default=defaults.get(CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL),
+                    ): int,
+                    vol.Optional(
+                        CONF_POLLING_INTERVAL_SECONDS,
+                        default=defaults.get(
+                            CONF_POLLING_INTERVAL_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS
+                        ),
                     ): int,
                     vol.Optional(
                         CONF_HMAC_ACCESS_KEY,
@@ -393,6 +401,12 @@ class ZeekrEVAPIOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_POLLING_INTERVAL,
                         default=data.get(CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL),
+                    ): int,
+                    vol.Optional(
+                        CONF_POLLING_INTERVAL_SECONDS,
+                        default=data.get(
+                            CONF_POLLING_INTERVAL_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS
+                        ),
                     ): int,
                     vol.Optional(
                         CONF_HMAC_ACCESS_KEY,

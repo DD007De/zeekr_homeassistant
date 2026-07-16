@@ -14,7 +14,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 import homeassistant.helpers.event as event
 
 
-from .const import CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL, DOMAIN
+from .const import (
+    CONF_POLLING_INTERVAL,
+    CONF_POLLING_INTERVAL_SECONDS,
+    DEFAULT_POLLING_INTERVAL,
+    DEFAULT_POLLING_INTERVAL_SECONDS,
+    DOMAIN,
+)
 from .request_stats import ZeekrRequestStats
 
 if TYPE_CHECKING:
@@ -55,12 +61,23 @@ class ZeekrCoordinator(DataUpdateCoordinator):
         # Count of consecutive failed status polls per VIN, so carry-forward of
         # stale data is bounded (see MAX_STALE_UPDATES).
         self._stale_count: dict[str, int] = {}
-        polling_interval = entry.data.get(CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL)
+        # Sub-minute polling takes precedence when set (>= 5 s); otherwise fall
+        # back to the minutes interval. Beware API rate limits with low values.
+        polling_seconds = entry.data.get(
+            CONF_POLLING_INTERVAL_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS
+        )
+        if polling_seconds and polling_seconds >= 5:
+            update_interval = timedelta(seconds=polling_seconds)
+        else:
+            polling_interval = entry.data.get(
+                CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL
+            )
+            update_interval = timedelta(minutes=polling_interval)
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(minutes=polling_interval),
+            update_interval=update_interval,
         )
 
         # Schedule daily reset at midnight

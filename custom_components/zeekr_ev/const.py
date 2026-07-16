@@ -61,6 +61,7 @@ CONF_PROD_SECRET = "prod_secret"
 CONF_VIN_KEY = "vin_key"
 CONF_VIN_IV = "vin_iv"
 CONF_POLLING_INTERVAL = "polling_interval"
+CONF_POLLING_INTERVAL_SECONDS = "polling_interval_seconds"
 CONF_USE_LOCAL_API = "use_local_api"
 CONF_DRIVE_SIDE = "drive_side"
 DRIVE_SIDE_LHD = "lhd"
@@ -69,6 +70,10 @@ DRIVE_SIDE_RHD = "rhd"
 # Defaults
 DEFAULT_NAME = DOMAIN
 DEFAULT_POLLING_INTERVAL = 5  # minutes
+# Sub-minute polling. 0 = disabled (use the minutes interval above).
+# When >= 5, this overrides the minutes interval. Beware API rate limits:
+# each poll is ~6 requests, so 10 s ≈ ~2160 requests/hour.
+DEFAULT_POLLING_INTERVAL_SECONDS = 0
 
 # Country code to (country_name, region) mapping
 COUNTRY_CODE_MAPPING = {
