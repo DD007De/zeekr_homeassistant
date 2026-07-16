@@ -164,7 +164,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Register services (only once)
     await async_setup_services(hass)
 
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    # NOTE: no add_update_listener here. The options flow reloads the entry
+    # explicitly via hass.config_entries.async_reload(); adding a reload update
+    # listener as well caused a double reload that raced the unload and crashed
+    # with "Config entry was never loaded!" on every platform.
     return True
 
 
