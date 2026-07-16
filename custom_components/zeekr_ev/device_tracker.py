@@ -39,60 +39,33 @@ class ZeekrDeviceTracker(CoordinatorEntity, TrackerEntity):
         self.vin = vin
         self._attr_name = "Location"
         self._attr_unique_id = f"{vin}_location"
-        self._last_lat: float | None = None
-        self._last_lon: float | None = None
 
     @property
     def source_type(self) -> SourceType:
         """Return the source type, eg gps or router, of the device."""
         return SourceType.GPS
 
-    def _refresh_position(self) -> None:
-        """Update the cached position, ignoring unreliable fixes.
-
-        The Zeekr cloud returns an unstable position while the car is parked:
-        stale/drifted fixes several km off, or none at all. Read blindly this
-        made the tracker jump to far-away places or flap to 'unknown'. Since a
-        parked car does not move, we:
-          - keep the last known position when a poll has no valid fix;
-          - ignore fixes the API itself flags as untrustworthy
-            (position.posCanBeTrusted == '0');
-          - never overwrite a known position while the car is parked
-            (engineStatus 'engine-off') — only update while it is moving.
-        The position self-corrects on the next drive.
-        """
-        data = self.coordinator.data.get(self.vin, {})
-        basic = data.get("basicVehicleStatus", {}) or {}
-        pos = basic.get("position", {}) or {}
-
-        try:
-            lat = float(pos["latitude"]) if pos.get("latitude") else None
-            lon = float(pos["longitude"]) if pos.get("longitude") else None
-        except (ValueError, TypeError):
-            lat = lon = None
-
-        if lat is None or lon is None:
-            return  # no valid fix — keep last known position
-        if str(pos.get("posCanBeTrusted", "1")).strip() == "0":
-            return  # API flags this fix as untrustworthy
-        parked = str(basic.get("engineStatus", "")).strip().lower() == "engine-off"
-        if parked and self._last_lat is not None:
-            return  # parked car does not move — hold last known position
-
-        self._last_lat = lat
-        self._last_lon = lon
-
     @property
     def latitude(self) -> float | None:
         """Return latitude value of the device."""
-        self._refresh_position()
-        return self._last_lat
+        data = self.coordinator.data.get(self.vin, {})
+        try:
+            val = data.get("basicVehicleStatus", {}).get("position", {}).get("latitude")
+            return float(val) if val else None
+        except (ValueError, TypeError):
+            return None
 
     @property
     def longitude(self) -> float | None:
         """Return longitude value of the device."""
-        self._refresh_position()
-        return self._last_lon
+        data = self.coordinator.data.get(self.vin, {})
+        try:
+            val = (
+                data.get("basicVehicleStatus", {}).get("position", {}).get("longitude")
+            )
+            return float(val) if val else None
+        except (ValueError, TypeError):
+            return None
 
     @property
     def device_info(self):
