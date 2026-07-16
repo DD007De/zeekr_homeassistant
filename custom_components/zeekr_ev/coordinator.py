@@ -18,7 +18,6 @@ from .const import (
     CONF_POLLING_INTERVAL,
     CONF_POLLING_INTERVAL_SECONDS,
     DEFAULT_POLLING_INTERVAL,
-    DEFAULT_POLLING_INTERVAL_SECONDS,
     DOMAIN,
 )
 from .request_stats import ZeekrRequestStats
@@ -61,23 +60,18 @@ class ZeekrCoordinator(DataUpdateCoordinator):
         # Count of consecutive failed status polls per VIN, so carry-forward of
         # stale data is bounded (see MAX_STALE_UPDATES).
         self._stale_count: dict[str, int] = {}
-        # Sub-minute polling takes precedence when set (>= 5 s); otherwise fall
-        # back to the minutes interval. Beware API rate limits with low values.
-        polling_seconds = entry.data.get(
-            CONF_POLLING_INTERVAL_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS
-        )
-        if polling_seconds and polling_seconds >= 5:
-            update_interval = timedelta(seconds=polling_seconds)
-        else:
-            polling_interval = entry.data.get(
-                CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL
-            )
-            update_interval = timedelta(minutes=polling_interval)
+        # Polling interval is configured in SECONDS. Older configs stored it in
+        # minutes; fall back to that (x60) for backward compatibility. Floor 5 s.
+        polling_seconds = entry.data.get(CONF_POLLING_INTERVAL_SECONDS)
+        if not polling_seconds:
+            minutes = entry.data.get(CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL)
+            polling_seconds = minutes * 60
+        polling_seconds = max(int(polling_seconds), 5)
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=update_interval,
+            update_interval=timedelta(seconds=polling_seconds),
         )
 
         # Schedule daily reset at midnight

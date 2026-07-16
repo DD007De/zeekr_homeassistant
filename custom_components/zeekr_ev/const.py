@@ -69,11 +69,10 @@ DRIVE_SIDE_RHD = "rhd"
 
 # Defaults
 DEFAULT_NAME = DOMAIN
-DEFAULT_POLLING_INTERVAL = 5  # minutes
-# Sub-minute polling. 0 = disabled (use the minutes interval above).
-# When >= 5, this overrides the minutes interval. Beware API rate limits:
-# each poll is ~6 requests, so 10 s ≈ ~2160 requests/hour.
-DEFAULT_POLLING_INTERVAL_SECONDS = 0
+DEFAULT_POLLING_INTERVAL = 5  # minutes (legacy; kept only for migrating old configs)
+# Polling interval in SECONDS — the primary setting. Floor is 5 s. Beware API
+# rate limits: each poll is ~6 requests, so 10 s ≈ ~2160 requests/hour.
+DEFAULT_POLLING_INTERVAL_SECONDS = 300
 
 # Country code to (country_name, region) mapping
 COUNTRY_CODE_MAPPING = {

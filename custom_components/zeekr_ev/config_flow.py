@@ -27,7 +27,6 @@ from .const import (
     DRIVE_SIDE_LHD,
     DRIVE_SIDE_RHD,
     DEFAULT_POLLING_INTERVAL,
-    DEFAULT_POLLING_INTERVAL_SECONDS,
     DOMAIN,
     COUNTRY_CODE_MAPPING,
 )
@@ -173,13 +172,10 @@ class ZeekrEVAPIFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):  # type: 
                         )
                     ),
                     vol.Optional(
-                        CONF_POLLING_INTERVAL,
-                        default=defaults.get(CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL),
-                    ): int,
-                    vol.Optional(
                         CONF_POLLING_INTERVAL_SECONDS,
-                        default=defaults.get(
-                            CONF_POLLING_INTERVAL_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS
+                        default=(
+                            defaults.get(CONF_POLLING_INTERVAL_SECONDS)
+                            or defaults.get(CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL) * 60
                         ),
                     ): int,
                     vol.Optional(
@@ -399,13 +395,10 @@ class ZeekrEVAPIOptionsFlowHandler(config_entries.OptionsFlow):
                         default=data.get(CONF_COUNTRY_CODE, ""),
                     ): str,
                     vol.Optional(
-                        CONF_POLLING_INTERVAL,
-                        default=data.get(CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL),
-                    ): int,
-                    vol.Optional(
                         CONF_POLLING_INTERVAL_SECONDS,
-                        default=data.get(
-                            CONF_POLLING_INTERVAL_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS
+                        default=(
+                            data.get(CONF_POLLING_INTERVAL_SECONDS)
+                            or data.get(CONF_POLLING_INTERVAL, DEFAULT_POLLING_INTERVAL) * 60
                         ),
                     ): int,
                     vol.Optional(
