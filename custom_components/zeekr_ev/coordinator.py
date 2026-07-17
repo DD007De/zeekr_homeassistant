@@ -77,6 +77,7 @@ class ZeekrCoordinator(DataUpdateCoordinator):
         self._driving_interval = (
             timedelta(seconds=max(int(driving_seconds), 5)) if driving_seconds else None
         )
+        self._driving_now = False
         super().__init__(
             hass,
             _LOGGER,
@@ -269,14 +270,16 @@ class ZeekrCoordinator(DataUpdateCoordinator):
             not in ("", "engine-off")
             for vd in data.values()
         )
+        if driving == self._driving_now:
+            return
+        self._driving_now = driving
         target = self._driving_interval if driving else self._base_interval
-        if self.update_interval != target:
-            self.update_interval = target
-            _LOGGER.debug(
-                "Zeekr polling interval -> %s (%s)",
-                target,
-                "driving" if driving else "idle",
-            )
+        self.update_interval = target
+        _LOGGER.debug(
+            "Zeekr polling interval -> %s (%s)",
+            target,
+            "driving" if driving else "idle",
+        )
 
     async def _async_update_data(self) -> dict[str, dict]:
         """Fetch data from API endpoint."""
